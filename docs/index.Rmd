@@ -1,0 +1,522 @@
+---
+title: "NBA Playoff run prediction model"
+author: "Arturo Ávalos Espinoza"
+date: '2023-08-09'
+output:
+  html_document:
+    code_folding: hide
+    toc: yes
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(dplyr)
+library(readxl)
+library(ggplot2)
+library(tidyr)
+library(tidyverse)
+library(nnet) #Multinomial logistic regresion option #1
+library(VGAM) #Multinomial logistic regression option #2
+library(MASS)
+library(gridExtra)
+library(cowplot)
+library(summarytools)
+```
+
+## 1: Intent and description of the metrics utilized
+
+The intent of the notebook that is presented here is to explore the role that advanced stats have in determining how far an NBA team makes it in the playoffs. Additionally, we will be using a machine learning model to predict how far teams make into the playoffs, therefore, this qualifies as a supervised classification exercise. For this purpose we use data from the website *Basketball-Reference.com* encompassing numbers from the 2004-2005 season to the 2022-2023 season. The reason that no older data is used lies in the fact that before that year there were fewer teams in the NBA, so our data set would not be symmetrical if we were to expand the years of reference.
+
+### 1.1 The metrics
+
+As stated before, the main purpose of this exercise is to determine the relevancy of advanced stats of the regular season during the NBA playoffs, hence, it is necessary to describe thoroughly the construction of these metrics. A more detailed description of these advanced stats is available in the appendix. 
+
+-   **Offensive Effective Field Goal Percentage (eFG%)**: This statistic adjusts for the fact that a 3-point field goal is worth one more point than a 2-point field goal.
+
+-   **Offensive Turnover Percentage (oTOV%)**: An estimate of turnover per 100 plays. 
+
+-   **Offensive Rebound Percentage (oRB%)**: an estimate of the percentage of available offensive rebounds a player grabbed while he was on the floor. 
+
+-   **Offensive Free Throws per Field Goal Attempted (oFTFGA)**: Free throws per Field Goals Attempted.
+
+-   **Defensive Effective Field Goal Percentage (dEFG)**: Opponent's effective field goal percentage.
+
+-   **Defensive Turnover Percentage (dTOV%)**: Opponent's turnover percentage.
+
+-   **Defensive Rebound Percentage (dRB%)**: an estimate of the percentage of available defensive rebounds a player grabbed while he was on the floor. 
+
+-   **Defensive Free Throws per Field Goal Attempted doFTFGA)**: Opponent's free throws per Field Goals Attempted.
+
+In general, the relevance of these stats lies in that they integrate a multitude of simple statistics and transform them into a percentage for the whole season.
+
+### 1.2 The Objective Variable
+
+As stated before, the main purpose of this notebook is to find the relation between these metrics and the playoff run of each team. Therefore, we define 6 different possible results for a playoff run. Each run describes the final round a team achieved:
+
+1.  No playoffs (NA)
+
+2.  Playoffs (POF), basically only making it to the first round.
+
+3.  Second Round (2RD)
+
+4.  Conference Finals (CF)
+
+5.  Finals (FNL)
+
+6.  Championship (CHA)
+
+## 2. The Data
+
+The data was collected by a rudimentary method of reading excel files, which were downloaded through the discussed website. Each metric was then read individually and put together by adding indexes and pivoting each observation and then joined using indexes as the link between them.
+
+```{r cars,include=FALSE}
+#Data
+
+#Reading playoffs data and using pivot function
+playoffs <- read_xlsx("/Users/arturoavalos/Documents/tesis/NBA/playoffs.xlsx") %>% dplyr::select(1:20) %>%
+  pivot_longer(cols = 2:20,names_to = "season",values_to = "playoff_run")
+#Adding indexes
+playoffs <- tibble::rowid_to_column(playoffs, "index")
+#Replacing Na's
+playoffs <- playoffs %>% mutate(playoff_run = replace_na(playoff_run,"NA"))
+
+#Reading oEFG data and using pivot function
+oEFG <- read_xlsx("/Users/arturoavalos/Documents/tesis/NBA/oEFG.xlsx") %>% dplyr::select(1:20) %>%
+  pivot_longer(cols = 2:20,names_to = "season",values_to = "oEFG")
+#Adding indexes
+oEFG <- tibble::rowid_to_column(oEFG, "index")
+oEFG <- oEFG %>% dplyr::select(-Team,-season)
+
+#Reading oTOV data and using pivot function
+oTOV <- read_xlsx("/Users/arturoavalos/Documents/tesis/NBA/oTOV.xlsx") %>% dplyr::select(1:20) %>%
+  pivot_longer(cols = 2:20,names_to = "season",values_to = "oTOV")
+#Adding indexes
+oTOV <- tibble::rowid_to_column(oTOV, "index")
+oTOV <- oTOV %>% dplyr::select(-Team,-season)
+
+#Reading oRB data and using pivot function
+oRB <- read_xlsx("/Users/arturoavalos/Documents/tesis/NBA/oRB.xlsx") %>% dplyr::select(1:20) %>%
+  pivot_longer(cols = 2:20,names_to = "season",values_to = "oRB")
+#Adding indexes
+oRB <- tibble::rowid_to_column(oRB, "index")
+oRB <- oRB %>% dplyr::select(-Team,-season)
+
+#Reading oFTFG data and using pivot function
+oFTFG <- read_xlsx("/Users/arturoavalos/Documents/tesis/NBA/oFTFG.xlsx") %>% dplyr::select(1:20) %>%
+  pivot_longer(cols = 2:20,names_to = "season",values_to = "oFTFG")
+#Adding indexes
+oFTFG <- tibble::rowid_to_column(oFTFG, "index")
+oFTFG <- oFTFG %>% dplyr::select(-Team,-season)
+
+#Reading dEFG data and using pivot function
+dEFG <- read_xlsx("/Users/arturoavalos/Documents/tesis/NBA/dEFG.xlsx") %>% dplyr::select(1:20) %>%
+  pivot_longer(cols = 2:20,names_to = "season",values_to = "dEFG")
+#Adding indexes
+dEFG <- tibble::rowid_to_column(dEFG, "index")
+dEFG <- dEFG %>% dplyr::select(-Team,-season)
+
+#Reading dTOV data and using pivot function
+dTOV <- read_xlsx("/Users/arturoavalos/Documents/tesis/NBA/dTOV.xlsx") %>% dplyr::select(1:20) %>%
+  pivot_longer(cols = 2:20,names_to = "season",values_to = "dTOV")
+#Adding indexes
+dTOV <- tibble::rowid_to_column(dTOV, "index")
+dTOV <- dTOV %>% dplyr::select(-Team,-season)
+
+#Reading dRB data and using pivot function
+dRB <- read_xlsx("/Users/arturoavalos/Documents/tesis/NBA/dRB.xlsx") %>% dplyr::select(1:20) %>%
+  pivot_longer(cols = 2:20,names_to = "season",values_to = "dRB")
+#Adding indexes
+dRB <- tibble::rowid_to_column(dRB, "index")
+dRB <- dRB %>% dplyr::select(-Team,-season)
+
+#Reading dFTFG data and using pivot function
+dFTFG <- read_xlsx("/Users/arturoavalos/Documents/tesis/NBA/dFTFG.xlsx") %>% dplyr::select(1:20) %>%
+  pivot_longer(cols = 2:20,names_to = "season",values_to = "dFTFG")
+#Adding indexes
+dFTFG <- tibble::rowid_to_column(dFTFG, "index")
+dFTFG <- dFTFG %>% dplyr::select(-Team,-season)
+
+#Joining all data bases
+df_E_data <- playoffs %>%
+  left_join(oEFG, by = "index") %>%
+    left_join(oTOV,by = "index") %>%
+      left_join(oRB,by = "index") %>%
+        left_join(oFTFG,by = "index") %>%
+  left_join(dEFG,by = "index") %>%
+    left_join(dTOV,by = "index") %>%
+      left_join(dRB,by = "index") %>%
+        left_join(dFTFG,by = "index")
+```
+
+To illustrate this, here is a piece of the code used for each metric:
+
+```{r, include=TRUE}
+#Reading dFTFG data and using pivot function
+dFTFG <- read_xlsx("/Users/arturoavalos/Documents/tesis/NBA/dFTFG.xlsx") %>% dplyr::select(1:20) %>%
+  pivot_longer(cols = 2:20,names_to = "season",values_to = "dFTFG")
+#Adding indexes
+dFTFG <- tibble::rowid_to_column(dFTFG, "index")
+dFTFG <- dFTFG %>% dplyr::select(-Team,-season)
+```
+
+Also, the method used to join each individual metric:
+
+```{r,include=TRUE}
+#Joining all data bases
+df_E_data <- playoffs %>%
+  left_join(oEFG, by = "index") %>%
+    left_join(oTOV,by = "index") %>%
+      left_join(oRB,by = "index") %>%
+        left_join(oFTFG,by = "index") %>%
+  left_join(dEFG,by = "index") %>%
+    left_join(dTOV,by = "index") %>%
+      left_join(dRB,by = "index") %>%
+        left_join(dFTFG,by = "index")
+
+#Making sure that response variable run is ordered
+df_E_data$playoff_run <-  factor(df_E_data$playoff_run, ordered = TRUE, levels = c("NA", "POF","2RD","CF","FNL","CHA"))
+```
+
+Now we explore the content of our Data Frame:
+
+```{r}
+str(df_E_data)
+```
+
+As it is visible, the data frame consists of 570 observations, one for each of the 30 teams during the 19 seasons studied. It also contains 12 features: the observation index, the team, season, the playoff run and the 8 advanced statistics.
+
+To get a better sense of the composition of the objective variable we can count the times present of each individual class:
+
+```{r}
+df_E_data %>%
+    group_by(playoff_run) %>% count()
+```
+
+As it is clear, the most common result is to not make the playoffs. As the post season advances, one team is eliminated from contention, therefore every step get cut down by half, leaving 19 champions and teh 19 runner ups in the finals. 
+
+### 2.1 Visualizing the data
+
+Given our goal, it is important to visually understand the relationship between the objective variable and the advanced stats:
+
+```{r, include=FALSE}
+oEFG_g<-ggplot(df_E_data,aes(y=oEFG,x=playoff_run)) + geom_boxplot() + labs(y="Offensive eFG%",x="Run",subtitle="Effective field goal percentage")
+```
+
+```{r, include=FALSE}
+oTOV_g<-ggplot(df_E_data,aes(y=oTOV,x=playoff_run)) + geom_boxplot() + labs(y="Offensive TOV%",x="Run",subtitle="Turnover percentage")
+```
+
+```{r, include=FALSE}
+oRB_g<-ggplot(df_E_data,aes(y=oRB,x=playoff_run)) + geom_boxplot() + labs(y="Offensive RB%",x="Run",subtitle="Rebound percentage")
+```
+
+```{r, include=FALSE}
+oFTFG_g<-ggplot(df_E_data,aes(y=oFTFG,x=playoff_run)) + geom_boxplot() + labs(y="Offensive FT per FG",x="Run",subtitle="Free Throws per Field Goals")
+```
+
+```{r,echo=FALSE}
+grid_offense <- grid.arrange(oEFG_g, oTOV_g, oRB_g, oFTFG_g, ncol = 2, top = "Offensive stats distribution by playoff run")
+```
+
+-   As it is seen from the top left graph, the teams that advanced deeper into the playoffs have a higher median offensive effective field goal percentage during the regular season. Therefore, it would be wise to consider using this metric for the predictive model.
+
+-   Regarding the offensive turnover percentage, there is no clear tendency when its related to the playoff run. Although it's clear that the median decreases from `NA` to the conference finals, there is a considerable spike in teams that reach the finals and/or become champions. This stat should be further analyzed to determine it's validity for the models.
+
+-   There appears to be close to no variation in the offensive rebound percentage. Further test should be applied to determine this stat's relevance for the predictive models.
+
+-   There seems to be low variation among the different stages of the playoffs for the FT per FG. Nevertheless, there seems to be a drastic decrease in this stat when it comes to the championship teams. Further analysis are necessary.
+
+```{r, include=FALSE}
+dEFG_g<-ggplot(df_E_data,aes(y=dEFG,x=playoff_run)) + geom_boxplot() + labs(x="Run",y="Defensive eFG%",subtitle="Effective field goal percentage")
+```
+
+```{r, include=FALSE}
+dTOV_g<-ggplot(df_E_data,aes(y=dTOV,x=playoff_run)) + geom_boxplot() + labs(x="Run",y="Defensive TOV%",subtitle="Turnover percentage")
+```
+
+```{r, include=FALSE}
+dRB_g<-ggplot(df_E_data,aes(y=dRB,x=playoff_run)) + geom_boxplot() + labs(x="Run",y="Defensive RB%",subtitle="Rebound percentage")
+```
+
+```{r, include=FALSE}
+dFTFG_g<-ggplot(df_E_data,aes(y=dFTFG,x=playoff_run)) + geom_boxplot() + labs(x="Run",y="Defensive FT per FG",subtitle="Free throw per field goal")
+```
+
+```{r,echo=FALSE}
+grid_defense <- grid.arrange(dEFG_g, dTOV_g, dRB_g, dFTFG_g, ncol = 2, top = "Defensive stats distribution by playoff run")
+```
+
+-   For the effective field goal percentage, there is a clear decrease from teams that don't make the playoffs to those who do. Additionally, for those teams who reach the second round and forward, the median remains close to constant.
+
+-   For the defensive turnover percentage there appears to be no clear tendency in the different sets. It is necessary to validate the relevance of this stat in the following steps.
+
+-   For the defensive rebound percentage there appears to be a constant increase from `NA` all the way up to the Conference Finals, after which there is visible a slight decrease.
+
+-   Finally, for the defensive free throw per field goal there are mixed messages. The numbers suggest that this stat is lower for those teams who did make the playoffs than for those who didn't. Nevertheless, the differences become less clear the deeper the teams go into the playoffs.
+
+### 2.2 Validating the data
+
+As stated in the previous section, it is necessary to validate the difference in distribution of certain stats among the different playoff runs. 
+
+The first stat to investigate is the offensive effective field goal percentage. An ANOVA (analysis of variance) test  can tell us if there are significant differences between groups, but for this test to work we need to validate that the data is normally distributed. We can visualize this with a Q-Q plot, ff the points lie along a straight line, the data is likely normally distributed.
+
+```{r,collapse=TRUE}
+qqnorm(df_E_data$oEFG)
+qqline(df_E_data$oEFG)
+```
+
+As we can see, the data appears to be not normally distributed. As a safety measure, we conduct a Shapiro-Wilk normality test, where if the p-value from this test is greater than a chosen significance level (e.g., 0.05), we fail to reject the null hypothesis and consider the data to be approximately normally distributed.
+
+```{r}
+shapiro.test(df_E_data$oEFG)
+```
+Given the p-value, we reject the null hypothesis and conclude the data is not normally distributed. Given this fact, we cannot use an ANOVA test, so we differ to a Kruskal-Wallis test for non-normally distributed data:
+
+```{r}
+kruskal.test(oEFG ~ playoff_run, data = df_E_data)
+```
+We reject the null hypothesis and conclude *differences in effective field goal between the groups*. 
+
+We proceed likewise with the offensive turnover percentage, first checking if the data is normally distributed.  
+
+```{r,collapse=TRUE}
+qqnorm(df_E_data$oTOV)
+qqline(df_E_data$oTOV)
+```
+
+ As we can see, the data appears to be normally distributed. As a safety measure, we conduct a Shapiro-Wilk normality test, where if the p-value from this test is greater than a chosen significance level (e.g., 0.05), we fail to reject the null hypothesis and consider the data to be approximately normally distributed.
+ 
+```{r}
+shapiro.test(df_E_data$oTOV)
+```
+
+Since the p-value this test is greater than every conventional significance level, we fail to reject the null hypothesis and therefore the data is approximately normally distributed. Now, we can proceed with the ANOVA test:
+
+```{r}
+summary(aov(oTOV ~ playoff_run, data = df_E_data))
+```
+
+Given that the p-value of the test is significant, we reject the null hypothesis and *conclude difference between the groups*. Therefore, this stat will be useful for our predictive models. 
+
+Now we apply the same methods for the rest of the advanced stats whose variance between groups is uncertain. 
+
+Let's consider the offensive rebound percentage and make sure it is approximately normally distributed: 
+```{r,collapse=TRUE}
+qqnorm(df_E_data$oRB)
+qqline(df_E_data$oRB)
+```
+
+It does not seem that the data is normally distributed. Let's do a hypothesis test:
+
+```{r}
+shapiro.test(df_E_data$oRB)
+```
+Since the p-values is lower that any desired significance level, we reject the null hypothesis, therefore the data is not normally distributed. Given this, we differ again to a Kruskal-Wallis test for non-normally distributed data:
+
+```{r}
+kruskal.test(oRB ~ playoff_run, data = df_E_data)
+```
+Given the value of the p-value we fail to reject the null hypothesis and conclude that there is *no statistically significant difference between groups in the offensive rebound category*. Therefore, there is no need to include this variable to our predictive models. 
+
+For the last of the offensive advanced stats, we verify that offensive free throws per field goal is normally distributed:
+
+```{r,collapse=TRUE}
+qqnorm(df_E_data$oFTFG)
+qqline(df_E_data$oFTFG)
+```
+
+Just by looking at the graph it is clear that this data is not normally distributed, therefore to test for differences among groups we apply again a Kruskal-Wallis test:
+
+```{r}
+kruskal.test(oFTFG ~ playoff_run, data = df_E_data)
+```
+
+The p-value lies under the 0.05 significance level but over the 0.01, for practical purposes we used the 0.05 as the standard, so *we reject the null hypothesis and conclude that there are significant differences between groups*.
+
+Now diving into the defensive turnover percentage. First we check if this data is normally distributed:
+
+```{r}
+shapiro.test(df_E_data$dTOV)
+```
+Given the p-value, we fail to reject the null hypothesis and conclude the data is approximately normally distributed. Now we can perform the ANOVA test. 
+
+```{r}
+summary(aov(dTOV ~ playoff_run, data = df_E_data))
+```
+
+This result tells us *there is no significant statistical difference between groups*. Therefore, there is no need to include this variable in the predictive model. 
+
+## 3. The Predictive Model
+
+To predict the result of the NBA playoffs we will a classification mechanisms: a Linear Discriminant Analysis model (LDA). 
+
+### 3.1 Linear Discriminant Analysis
+
+The LDA method is a statistical and machine learning technique used for dimensionality reduction and classification. The main objective is to find a combination of features that best separates (or discriminates) between different classes on a data set. 
+
+In this particular case, the features to be used are the advanced stats previously discussed, and the classes are the playoff run of each team. 
+
+The first step into applying an LDA is to scale the data, since one of the key assumptions of this method is that each predictor variable have the same variance. To meet this assumption each variable can be transformed to have a mean of 0 and a standard deviation of 1. 
+
+```{r}
+#Save original data set and Scale each predictor 
+df_E_unscaled <- df_E_data
+df_E_data[5:12] <- scale(df_E_data[5:12])
+```
+
+We verify that each predictor has mean 0 and standard deviation of 1.
+
+```{r}
+apply(df_E_data[5:12],2,mean)
+apply(df_E_data[5:12],2,sd)
+```
+
+The next step is to separate the data set into a training and testing samples. We randomize the separation, keeping 70% of the data for training and the rest for testing.
+
+```{r}
+#Use 70% of dataset as training set and remaining 30% as testing set
+set.seed(5)
+sample <- sample(c(TRUE, FALSE), nrow(df_E_data), replace=TRUE, prob=c(0.7,0.3))
+train <- df_E_data[sample, ]
+test <- df_E_data[!sample, ]
+```
+
+Alternatively, it may be useful to separate the train and test data not by a random process, but by season, to try to predict the run of each team during the last few seasons. If we still decide to keep 70% of the data as a training set, that would round up being from the first season 2005, to 2018. Therefore, the test set would be composed of the observation from the 2019-2023 seasons. 
+
+```{r}
+#Use 70% of dataset as training set and remaining 30% as testing set
+train_old <- df_E_data %>% filter(season<2019)
+test_new <- df_E_data %>% filter(season >2019)
+```
+
+Now that we have separated the data set we fit the LDA model with the training sets we can proceed to formulate the model using the predictors. Let's take into consideration that neither the offensive rebound percentage nor the defensive turnover percentage appeared to be statistically significant among classes, therefore they won't be used in the construction of the model. 
+Therefore the model takes shape following the expression:
+
+$$ 
+Run_{it} = oEFG_{it} + oFTFG_{it} + oTOV_{it} + dEFG_{it} + dRB_{it} + dFTFG_{it} + \beta 
+$$
+Where $\beta$ symbolizes a random element which the model does not account for. 
+
+We can see the prior probabilities of each classification in the training data, the means by group and the coefficients of linear discriminants (which display the linear combination of predictor variables that are used to form the decision rule of the LDA model). The proportion of trace displays the percentage separation achieved by each linear discriminant function
+```{r,collapse=TRUE}
+model <- lda(playoff_run~oEFG + oFTFG + oTOV + dEFG + dRB + dFTFG, data=train)
+```
+
+Now that we have constructed a model we can proceed to make predictions.
+```{r}
+#use LDA model to make predictions on test data
+predicted <- predict(model, test)
+#to be able to compare we gotta order the factors
+predicted$class <- factor(predicted$class, ordered = TRUE, levels = c("NA", "POF","2RD","CF","FNL","CHA"))
+```
+
+And we can perceive the accuracy of the model, which rounds about 60% accuracy on the test set. 
+```{r}
+#find accuracy of model
+mean(predicted$class==test$playoff_run) # 0.6011561
+```
+
+It is ideal to create a visualization of the predictions:
+```{r}
+#Create matrix
+table(test$playoff_run, predicted$class, dnn = c("Actual class", "Predicted class"))
+
+#define data to plot
+results <- cbind(predicted$class,test) %>%
+    mutate(acurrate = ifelse(predicted$class==playoff_run,1,0), acurrate = as.factor(acurrate))
+
+results$run <-  factor(results$playoff_run, ordered = TRUE, levels = c("NA", "POF","2RD","CF","FNL","CHA"))
+
+#create plot
+ggplot(results,aes(x=playoff_run,y=predicted$class,color = acurrate))+
+  geom_jitter(width = 0.25,height = 0.25) + 
+  labs(title = "Predicted classes vs actual classes",x="Actual playoff run",
+       y="Predicted playoff run",color="Accuracy")
+```
+
+As we can observe in the graph, the model had a decent prediction pattern for the first stages of the playoffs, specially predicted whether the team made the post season or not, but it fail to predict the actual playoff run accurately after the second round. Nevertheless, the model managed to correctly predict two fo the for champions in the testing set. 
+
+We can reproduce this graph but now using the data from the 2019-2023 seasons as a training set.
+```{r,collapse=TRUE}
+model_2 <- lda(playoff_run~oEFG + oFTFG + oTOV + dEFG + dRB + dFTFG, data=train_old)
+```
+
+```{r}
+#use LDA model to make predictions on test data
+predicted_2 <- predict(model_2, test_new)
+
+#to be able to compare we gotta order the factors
+predicted_2$class <- factor(predicted_2$class, ordered = TRUE, levels = c("NA", "POF","2RD","CF","FNL","CHA"))
+```
+
+As we can see, the accuracy of the prediction decreases slightly, about 2.5%. 
+```{r,collapse=TRUE}
+#find accuracy of model
+mean(predicted_2$class==test_new$playoff_run) # 0.575
+```
+
+Graphically: 
+```{r}
+#Create matrix
+table(test_new$playoff_run, predicted_2$class, dnn = c("Actual class", "Predicted class"))
+
+#define data to plot
+results_2 <- cbind(predicted_2$class,test_new) %>%
+    mutate(acurrate = ifelse(predicted_2$class==playoff_run,1,0), acurrate = as.factor(acurrate))
+
+results_2$run <-  factor(results_2$playoff_run, ordered = TRUE, levels = c("NA", "POF","2RD","CF","FNL","CHA"))
+
+#create plot
+ggplot(results_2,aes(x=playoff_run,y=predicted_2$class,color = acurrate))+
+  geom_jitter(width = 0.25,height = 0.25) + 
+  labs(title = "Predicted classes vs actual classes",x="Actual playoff run",
+       y="Predicted playoff run",color="Accuracy")
+```
+
+Once again we can see a similar pattern as the one observed with the previous training set, the models seems to be able to classify the run in the very first stages of the playoffs, but struggles to do it later on. 
+
+## Conclusions and limitations
+
+A possible explanation for the reason why the model looses precision in the latest stages is that, as stages in the playoffs develop, less teams reach those levels, therefore the volume of observations is heavily skewed towards the first stages of the playoffs. Another aspect that should be considered is that it is possible the advanced stats are good features to use to predict whether a team makes the playoffs or not, but they are not that reliable when it comes to measure winning in the playoffs. This could be fixed by changing either the model or the data used. Nevertheless, this is beyond the scope of this exercise. 
+
+
+## Appendix. 
+
+-   **Offensive Effective Field Goal Percentage (eFG%)**:
+
+$$
+eFG\% = (FG + 0.5 * 3P) / FGA
+$$
+
+Where $FG$ refers to Field Goals made, $3P$ refers to three points made and $FGA$ refers to total field goals attempted.
+
+-   **Offensive Turnover Percentage (oTOV%)**:
+
+$$
+oTOV\% = 100 * TOV / (FGA + 0.44 * FTA + TOV)
+$$ 
+
+Where $TOV$ refers to Turnovers and $FTA$ refers to free throws attempted.
+
+-   **Offensive Rebound Percentage (oRB%)**: 
+
+$$
+oRB\% = 100 * (ORB * (Tm MP / 5)) / (MP * (Tm ORB + Opp DRB)
+$$
+
+Where $ORB$ refers to the total offensive rebounds and $TmMP$ refers to the team's minutes played. $TmORB$ refers to the team's offensive rebounds and $OppDRB$ means the opponent's defensive rebounds.
+
+-   **Offensive Free Throws per Field Goal Attempted (oFTFGA)**: 
+
+This formula is self explanatory.
+
+-   **Defensive Rebound Percentage (dRB%)**:
+
+$$
+oRB\% = 100 * (DRB * (Tm MP / 5)) / (MP * (Tm DRB + Opp ORB))
+$$
+
+Where $DRB$ refers to the total defensive rebounds and $TmMP$ refers to the team's minutes played. $TmDRB$ refers to the team's defensive rebounds and $OppORB$ means the opponent's offensive rebounds.
+
+
